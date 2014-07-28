@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Example</title>
+</head>
+<body>
+<script type="text/javascript">
+function shaderProgram(gl, vs, fs) {
+	var prog = gl.createProgram();
+	var addshader = function(type, source) {
+		var s = gl.createShader((type == 'vertex') ? gl.VERTEX_SHADER : gl.FRAGMENT_SHADER);
+		gl.shaderSource(s, source);
+		gl.compileShader(s);
+		if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+			throw "Could not compile "+type+
+				" shader:\n\n"+gl.getShaderInfoLog(s);
+		}
+		gl.attachShader(prog, s);
+	};
+	addshader('vertex', vs);
+	addshader('fragment', fs);
+	gl.linkProgram(prog);
+	if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+		throw "Could not link the shader program!";
+	}
+	return prog;
+}
+
+function attributeSetFloats(gl, prog, attr_name, rsize, arr) {
+	gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
+	var attr = gl.getAttribLocation(prog, attr_name);
+	gl.enableVertexAttribArray(attr);
+	gl.vertexAttribPointer(attr, rsize, gl.FLOAT, false, 0, 0);
+}
+
+function draw() {
+	try {
+		var gl = document.getElementById("webgl")
+			.getContext("experimental-webgl");
+		if (!gl) { throw "x"; }
+	} catch (err) {
+		throw "Your web browser does not support WebGL!";
+	}
+	gl.clearColor(0.8, 0.8, 0.8, 1);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+
+	var prog = shaderProgram(gl, document.getElementById("shader_vs").text, document.getElementById("shader_fs").text);
+	gl.useProgram(prog);
+
+	attributeSetFloats(gl, prog, "pos", 3, [
+		-1, -1, 0,
+		-1, +1, 0,
+		+1, -1, 0,
+		+1, +1, 0,
+	]);
+	
+	gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function init() {
+	try {
+		draw();
+	} catch (e) {
+		alert("Error: "+e);
+	}
+}
+setTimeout(init, 100);
+
+</script>
+<canvas id="webgl" width="768" height="768"></canvas>
+</body>
+
+
+<script id="shader_vs" type="x-shader/x-fragment">
+	precision highp float;
+
+	attribute vec3 pos;
+	varying vec2 v_pos;
+
+	void main() {
+		gl_Position = vec4(pos, 1.0);
+		v_pos = pos.xy;
+	}
+
+/*
+	uniform vec4 u_ambientUp;
+	uniform vec4 u_ambientDown;
+	uniform vec3 u_lightDir;
+	uniform vec4 u_lightColor;
+	uniform sampler2D diffuseSamplerWall;
+	uniform sampler2D diffuseSamplerFloor;
+
+	varying vec3 v_worldPos;
+	//varying vec4 v_color;
+	varying vec3 v_normal;
+	varying vec3 v_eyeDir;
+
+	void main(void) {
+		vec4 diffuseX = texture2D(diffuseSamplerWall, vec2(v_worldPos.y, v_worldPos.z) * 0.1);
+		vec4 diffuseY = texture2D(diffuseSamplerWall, vec2(v_worldPos.z, v_worldPos.x) * 0.1);
+		vec4 diffuseZ = texture2D(diffuseSamplerFloor, vec2(v_worldPos.x, v_worldPos.y) * 0.1);
+		vec3 normal = normalize(v_normal);
+		vec3 diff_blend = normal * normal;
+		vec4 diffuse = diffuseX * diff_blend.x + diffuseY * diff_blend.y + diffuseZ * diff_blend.z;
+		float light = max(0.0, dot(normalize(u_lightDir), normal));
+		float glare = max(0.0, dot(v_normal, normalize(v_eyeDir + u_lightDir)));
+		glare = glare*glare;
+		glare = glare*glare;
+		glare = glare*glare;
+		glare = glare*glare;
+		glare = glare*glare;
+		glare = glare*glare;
+		vec4 ambient = mix(u_ambientDown, u_ambientUp, (normal.z + 1.0)/2.0);
+		// Gamma correction approximation (sqrt)
+		gl_FragColor = vec4((sqrt(ambient + light * u_lightColor) * diffuse).xyz, 1.0);
+	}
+	*/
+</script>
+
+<script id="shader_fs" type="x-shader/x-vertex">
+	#line 124
+	precision highp float;
+
+	varying vec2 v_pos;
+
+	const int MAX_STEPS = 64;
+	const float MIN_STEP_SIZE = 0.001;
+
+	float metaball(vec3 p)
+	{
+		vec3 c0 = vec3(0, 0, 1);
+		vec3 c1 = vec3(1, 0, 1);
+		float d0 = length(p - c0);
+		float d1 = length(p - c1);
+		return d0 + 0.75*d1 - 1.5;
+		//return min(d0-1.0, d1-.75);
+
+		// dist = fourMagicColumns( mod(p.x,1), p.y, mod(p.z,1) );
+	}
+
+	float distance2(vec3 p, out vec3 albedo)
+	{
+		float plane_dist = p.z;
+		float sphere_dist = metaball(p);;
+		if (plane_dist < sphere_dist) {
+			albedo = vec3(0.5, 0.1, 0.1);
+			return plane_dist;
+		} else {
+			albedo = vec3(0.1, 0.1, 0.4) * 1.0;
+			return sphere_dist;
+		}
+		//return min(plane_dist, sphere_dist);
+	}
+
+	float distance(vec3 p)
+	{
+		vec3 dummy_albedo;
+		return distance2(p, dummy_albedo);
+	}
+
+	vec3 trace(vec3 origin, vec3 dir, out vec3 albedo)
+	{
+		vec3 pos = origin;
+
+		for (int i=0; i<MAX_STEPS; ++i) {
+			float dist = distance2(pos, albedo);
+
+			if (dist < 0.1) {
+				pos += dir * dist;
+			} else {
+				albedo = vec3(0,0,0);
+			}
+
+			pos += dir * max(dist, MIN_STEP_SIZE);
+		}
+
+		return pos;
+	}
+
+	float saturate(float x) { return clamp(x, 0.0, 1.0); }
+
+	float calc_ao(vec3 p, vec3 n)
+	{
+		float ao = 1.0;
+
+		float k = 1.0;
+		float step = 0.15;
+		for (float i=1.0; i<=5.0; ++i) {
+			float dist = distance(p + n * i * step);
+			ao -= k * (i * step - dist);
+			k /= 2.0;
+		}
+
+		return ao;
+	}
+
+	vec3 calc_normal(vec3 p)
+	{
+		float e = 0.001;
+		return normalize(vec3(
+			distance(p + vec3(e,0,0)) - distance(p - vec3(e,0,0)),
+			distance(p + vec3(0,e,0)) - distance(p - vec3(0,e,0)),
+			distance(p + vec3(0,0,e)) - distance(p - vec3(0,0,e))));
+	}
+
+	void main() {
+		vec3 origin = vec3(0, -4, 1);
+		vec3 dir = normalize(vec3(v_pos.x/2.0, 1, v_pos.y/2.0));
+
+
+		vec3 albedo = vec3(0,0,0);
+		vec3 pos = trace(origin, dir, albedo);
+		vec3 normal = calc_normal(pos);
+
+		//float c = 1.0 - dist*0.25;
+		//gl_FragColor = vec4(c, c, c, 1.0);
+
+		//vec3 light_dir = vec3(1,0,1);
+		vec3 light_pos = vec3(2, -1, 3);
+		vec3 light_dir = light_pos - pos;
+		float light_dist = length(light_dir);
+		light_dir /= light_dist;
+
+		float light = 0.2; // ambient
+		float attn = clamp(1.0 - light_dist / 9.0, 0.0, 1.0);
+		light += saturate(dot(normal, light_dir)) * attn;
+		vec3 color = albedo;
+		color *= light;
+
+		// radial fog:
+		float dist = dot(pos - origin, dir);
+		color *= 1.0 - dist*0.05;
+
+		float ao = calc_ao(pos, normal);
+		color *= ao;
+
+		color *= 5.0;
+
+		//color = color*color;
+
+		gl_FragColor = vec4(color, 1.0);
+	}
+
+	/*
+		attribute vec3 position;
+		attribute vec3 normal;
+		attribute vec2 texCoord;
+
+		uniform mat4 u_worldviewproj;
+		uniform mat4 u_worldview;
+		uniform mat4 u_world;
+
+		varying vec3 v_worldPos;
+		//varying vec4 v_color;
+		varying vec3 v_normal;
+		varying vec3 v_eyeDir;
+
+		void main(void) {
+			//v_color = vec4(position.x + 0.5, position.y + 0.5, position.z + 0.5, 1.0);
+			v_normal = (u_world * vec4(normal, 0.0)).xyz;
+			//v_normal = vec3(0.0, 0.0, 1.0);
+			v_eyeDir = -normalize((u_worldview * vec4(position, 1.0)).xyz);
+			v_worldPos = position;
+			gl_Position = u_worldviewproj * vec4(position, 1.0);
+		}
+		*/
+</script>
+
+</html>
